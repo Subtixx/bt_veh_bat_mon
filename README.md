@@ -4,6 +4,10 @@ I recently bought [this](https://www.ebay.com/itm/186334016423) for the car sinc
 I did not want any unknown apk on my phone and decided to make my own app for it. Since I have no idea about android app development I decided to use flutter.
 All Technical details I think are correct are below. 
 
+# This repository
+
+The code looks really messy. I apologize but again I have no idea what I'm doing 🙈
+
 # Technical details
 
 It's a BLE (Bluetooth Low Energy Device) has the MAC `00:00:00:D1:0A:84` and name `Battery Asst`.
