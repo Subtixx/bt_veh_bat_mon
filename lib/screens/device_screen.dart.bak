@@ -1,0 +1,218 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:volt_vole/battery_device.dart';
+import 'dart:developer' as developer;
+
+import 'package:volt_vole/custom_bluetooth_device.dart';
+
+import 'device_selection_screen.dart';
+
+class DeviceScreen extends StatefulWidget {
+  final String deviceRemoteId;
+
+  const DeviceScreen(this.deviceRemoteId, {super.key}) : super();
+
+  @override
+  State<DeviceScreen> createState() => _DeviceScreenState();
+}
+
+class _DeviceScreenState extends State<DeviceScreen> {
+  bool _isConnecting = true;
+  bool _isScanning = true;
+  BluetoothDevice? _device;
+  late StreamSubscription<List<ScanResult>> _scanResultsSubscription;
+  late StreamSubscription<bool> _isScanningSubscription;
+  StreamSubscription<BluetoothConnectionState>? _connectionStateSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+
+    var batteryDevice = BatteryDevice(widget.deviceRemoteId);
+    _scanResultsSubscription =
+        FlutterBluePlus.scanResults.listen(onScanResults);
+    _isScanningSubscription =
+        FlutterBluePlus.isScanning.listen(onIsScanningChanged);
+
+    FlutterBluePlus.startScan(
+      timeout: const Duration(seconds: 5),
+      withRemoteIds: [widget.deviceRemoteId],
+    );
+  }
+
+  @override
+  void dispose() {
+    _scanResultsSubscription.cancel();
+    _connectionStateSubscription?.cancel();
+    if (_device != null) {
+      _device!.disconnect();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Device'),
+      ),
+      body: Center(child: buildLayout()),
+    );
+  }
+
+  Widget buildLayout() {
+    // If we are connecting show loadingIndicator and on the next line the text "Connecting to device..."
+    if (_isConnecting) {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          const CircularProgressIndicator(),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16.0),
+            child: Text('Connecting to ${widget.deviceRemoteId}'),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => DeviceSelectionScreen(),
+                  ),
+                );
+              });
+            },
+            child: const Text('Cancel'),
+          ),
+        ],
+      );
+    }
+
+    if (_device == null) {
+      return Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Text('Device not found'),
+            TextButton(
+              onPressed: startConnecting,
+              child: const Text('Retry'),
+            ),
+          ]);
+    }
+
+    return Container();
+  }
+
+  void startConnecting() {
+    setState(() {
+      _isConnecting = true;
+    });
+    FlutterBluePlus.startScan(
+      timeout: const Duration(seconds: 5),
+      withRemoteIds: [widget.deviceRemoteId],
+    );
+  }
+
+  void onIsScanningChanged(bool state) {
+    _isScanning = state;
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void onScanResults(List<ScanResult> results) {
+    // Check if the device is the one we are looking for
+    ScanResult? device = results
+        .where((result) =>
+            result.device.remoteId.toString() == widget.deviceRemoteId)
+        .firstOrNull;
+    if (device == null) {
+      if (!_isScanning) {
+        // Snackbar
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Device not found'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+
+        setState(() {
+          _isConnecting = false;
+        });
+      }
+      return;
+    }
+
+    setState(() {
+      _device = device.device;
+    });
+
+    _connectionStateSubscription =
+        _device!.connectionState.listen(onConnectionStateChange);
+    _device!.connect(
+        timeout: const Duration(seconds: 5), mtu: null, autoConnect: true);
+  }
+
+  void onConnectionStateChange(BluetoothConnectionState state) {
+    developer.log(state.toString());
+    if (state != BluetoothConnectionState.connected) {
+      if(_device!.disconnectReason != null) {
+        // Snackbar
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Connection to device failed'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+
+        setState(() {
+          _isConnecting = false;
+        });
+      }
+      return;
+    }
+
+    _device!.discoverServices().then((List<BluetoothService> services) {
+      // get service with characteristicUuid = ae02
+      BluetoothService? service = services
+          .where((service) =>
+              service.characteristics
+                  .where((characteristic) =>
+                      characteristic.uuid.toString() == 'ae02')
+                  .isNotEmpty)
+          .firstOrNull;
+      if (service == null) {
+        // Snackbar
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Service not found'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+      BluetoothCharacteristic? characteristic = service.characteristics.where(
+          (characteristic) => characteristic.uuid.toString() == 'ae02').firstOrNull;
+      if (characteristic == null) {
+        // Snackbar
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Characteristic not found'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+
+      characteristic.setNotifyValue(true);
+      characteristic.onValueReceived.listen((value) {
+      });
+    });
+
+    setState(() {
+      _isConnecting = false;
+    });
+  }
+}
